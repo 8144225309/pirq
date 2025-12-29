@@ -252,12 +252,11 @@ class Orchestrator:
                     semaphore=self.state_manager.load_semaphore(),
                 )
             elif not all_clear and force:
-                # Force bypass - log and continue
-                self.audit_logger.log(
-                    event="force_bypass",
-                    gates_bypassed=blocked_by,
-                    prompt=prompt[:100],
-                )
+                # Force bypass - log to legacy logger
+                self.logger.log("force_bypass", {
+                    "gates_bypassed": blocked_by,
+                    "prompt": prompt[:100],
+                })
             # Log session start (legacy logger)
             self.logger.log_session_start(task)
 
