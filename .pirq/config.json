@@ -1,0 +1,83 @@
+{
+  "backup": {
+    "provider": "auto",
+    "require": true,
+    "warn_cloud_only": true,
+    "i_accept_the_risk": false
+  },
+  "tokens": {
+    "budget": 50000,
+    "budget_type": "monthly",
+    "reset_day": 1,
+    "warn_at_percent_used": 80.0,
+    "block_at_percent_used": 95.0,
+    "reserve_percent": 5.0,
+    "reserve_mode": "soft",
+    "pacing_enabled": true,
+    "pace_warn_threshold": 150.0,
+    "pace_block_threshold": 200.0
+  },
+  "turbo": {
+    "enabled": true,
+    "activate_days_before_reset": 3,
+    "activate_hours_before_reset": 0,
+    "min_remaining_percent": 20.0,
+    "allow_reserve_dip": false
+  },
+  "session": {
+    "stale_lock_action": "inform",
+    "timeout_minutes": 60,
+    "heartbeat_enabled": false,
+    "heartbeat_interval_seconds": 60
+  },
+  "git": {
+    "commit_strategy": "per_prompt",
+    "checkpoint_enabled": true,
+    "checkpoint_interval_seconds": 30,
+    "checkpoint_max_tool_calls": 5,
+    "auto_tag_prompts": true,
+    "squash_wip_on_complete": true,
+    "commit_message_template": "AI: {summary}",
+    "tag_prefix": "pirq-prompt-"
+  },
+  "pirqs": {
+    "backup": {
+      "enabled": true,
+      "strictness": "required"
+    },
+    "tokens": {
+      "enabled": true
+    },
+    "run_complete": {
+      "enabled": true
+    },
+    "git_clean": {
+      "enabled": true,
+      "strictness": "warn"
+    },
+    "cooldown": {
+      "enabled": false,
+      "min_seconds": 30
+    },
+    "external_block": {
+      "enabled": true
+    },
+    "validators": {
+      "enabled": false,
+      "run_tests": false,
+      "run_lint": false,
+      "run_build": false
+    }
+  },
+  "self_manage": {
+    "max_consecutive_continues": 10,
+    "max_continues_per_hour": 30,
+    "abort_on_no_progress": 3,
+    "require_progress": true
+  },
+  "alerts": {
+    "console": true,
+    "system_notification": false,
+    "sound": false
+  }
+}

@@ -40,49 +40,59 @@ from .orchestrator import Orchestrator
 
 
 def cmd_status(args, orch: Orchestrator) -> int:
-    """Show current status."""
-    status = orch.get_status()
+    """Show current status with LIVE gate checks."""
+    # Run LIVE gate checks instead of reading stale cache
+    all_clear, gate_results = orch.check_gates()
+
+    # Get session info
+    lock_info = orch.session_gate.get_lock_info()
+    blocked_by = [name for name, r in gate_results.items() if r.is_blocked]
 
     if args.json:
-        print(json.dumps(status, indent=2))
+        output = {
+            "state": "GO" if all_clear else "WAIT",
+            "reason": f"Blocked by: {', '.join(blocked_by)}" if blocked_by else None,
+            "timestamp": __import__('datetime').datetime.utcnow().isoformat() + "Z",
+            "blocked_by": blocked_by,
+            "session_active": lock_info is not None,
+            "session_info": lock_info,
+            "gates": {name: r.to_dict() for name, r in gate_results.items()},
+        }
+        print(json.dumps(output, indent=2))
         return 0
 
     # Human-readable output
     print(f"PIRQ Orchestrator v{__version__}")
     print("-" * 40)
-    print(f"State:     {status['state']}")
+    print(f"State:     {'GO' if all_clear else 'WAIT'}")
 
-    if status['reason']:
-        print(f"Reason:    {status['reason']}")
+    if blocked_by:
+        print(f"Reason:    Blocked by: {', '.join(blocked_by)}")
 
-    if status['session_active']:
-        info = status['session_info']
-        sessions = info.get('sessions', [])
+    if lock_info:
+        sessions = lock_info.get('sessions', [])
         if sessions:
             print(f"Session:   {len(sessions)} active")
             for s in sessions:
                 force_marker = " [FORCE]" if s.get('force') else ""
                 print(f"           - PID {s.get('pid')}: {s.get('task', 'unknown')}{force_marker}")
         else:
-            print(f"Session:   Active (PID {info.get('pid')}, task: {info.get('task')})")
+            print(f"Session:   Active")
     else:
         print("Session:   Idle")
 
-    print(f"Timestamp: {status['timestamp']}")
+    if blocked_by:
+        print(f"Blocked:   {', '.join(blocked_by)}")
 
-    if status['blocked_by']:
-        print(f"Blocked:   {', '.join(status['blocked_by'])}")
-
-    # Gate summary
-    if status['pirqs']:
-        print("\nGates:")
-        for name, info in status['pirqs'].items():
-            status_icon = {
-                "clear": "[OK]",
-                "warn": "[!]",
-                "block": "[X]",
-            }.get(info.get('status', 'unknown'), "[?]")
-            print(f"  {status_icon} {name}: {info.get('message', 'unknown')}")
+    # Gate summary - LIVE results
+    print("\nGates:")
+    for name, result in gate_results.items():
+        status_icon = {
+            "clear": "[OK]",
+            "warn": "[!]",
+            "block": "[X]",
+        }.get(result.status.value, "[?]")
+        print(f"  {status_icon} {name}: {result.message}")
 
     return 0
 
