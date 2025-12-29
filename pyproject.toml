@@ -32,9 +32,7 @@ dependencies = []
 [project.urls]
 Homepage = "https://github.com/8144225309/pirq"
 Repository = "https://github.com/8144225309/pirq"
-Documentation = "https://github.com/8144225309/pirq#readme"
 Issues = "https://github.com/8144225309/pirq/issues"
-Changelog = "https://github.com/8144225309/pirq/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [

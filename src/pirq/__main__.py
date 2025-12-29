@@ -197,6 +197,7 @@ def cmd_run(args, orch: Orchestrator) -> int:
         timeout=getattr(args, 'timeout', None),
         last_session=getattr(args, 'last', False),
         yolo=getattr(args, 'yolo', False),
+        auto_mode=getattr(args, 'auto', False),
     )
 
     if result.blocked:
@@ -1470,6 +1471,7 @@ def main() -> int:
     # Session shortcuts
     run_parser.add_argument("--last", "-l", action="store_true", help="Resume the most recent Claude session")
     run_parser.add_argument("--yolo", action="store_true", help="Auto-approve all permissions (--dangerously-skip-permissions)")
+    run_parser.add_argument("--auto", action="store_true", help="Full auto mode: skip permissions, don't ask questions, default max-turns")
 
     # pirq loop
     loop_parser = subparsers.add_parser("loop", help="Loop detection management")

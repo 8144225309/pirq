@@ -1,160 +1,116 @@
 # PIRQ
 
-**Pre-execution Interrupt Request Queue** - A gating layer for Claude Code that enforces budget limits, tracks token usage, and prevents runaway AI sessions.
+**Pre-execution Interrupt Request Queue** — A gating layer for Claude Code that enforces budget limits, manages token pacing, and provides execution control for AI-assisted development workflows.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## What is PIRQ?
+## Overview
 
-PIRQ sits between you and Claude, checking gates before every execution:
+PIRQ intercepts Claude Code invocations and validates them against configurable gates before execution:
 
-- **Token Gate** - Budget tracking, pacing, and reserve protection
-- **Backup Gate** - Ensures git repository is in good state
-- **Rate Limit Gate** - Prevents runaway loops
-- **Session Gate** - Manages concurrent access
-
-Think of it as a circuit breaker for your AI budget.
+| Gate | Function |
+|------|----------|
+| **Token Gate** | Budget enforcement, usage pacing, reserve protection |
+| **Backup Gate** | Repository state validation |
+| **Rate Limit Gate** | Loop detection and execution throttling |
+| **Session Gate** | Concurrent access management |
 
 ## Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/8144225309/pirq.git
-cd pirq
-
-# Install in development mode
-pip install -e .
+pip install git+https://github.com/8144225309/pirq.git
 
 # Verify installation
 pirq status
 ```
 
-## Quick Start
+Or for development:
 
 ```bash
-# Check current status
-pirq status
-
-# Check all gates before running
-pirq check
-
-# Run a prompt through PIRQ
-pirq run "Explain what this codebase does"
-
-# Run with a specific model
-pirq run "Quick question" --model haiku
-
-# Output modes
-pirq run "Explain this" --output brief    # 500 char summary
-pirq run "Explain this" --output json     # Raw JSON for scripting
-
-# Safety limits
-pirq run "Refactor this" --max-turns 5    # Prevent infinite loops
-pirq run "Review code" --tools Read,Grep  # Restrict available tools
-
-# Check token budget and pacing
-pirq tokens status
-
-# See detailed pacing analysis
-pirq tokens pace
-
-# Check turbo mode (end-of-period token burning)
-pirq turbo status
+git clone https://github.com/8144225309/pirq.git
+cd pirq
+pip install -e .
 ```
 
-## Features
+## Usage
 
-### Token Budget Management
+### Basic Commands
 
 ```bash
-# Set warn threshold (alert when 80% used)
-pirq tokens warn --used 80
+# System status
+pirq status
 
-# Set block threshold (stop at 95% used)
+# Validate all gates
+pirq check
+
+# Execute prompt through PIRQ
+pirq run "Explain this codebase"
+
+# Model selection
+pirq run "Quick question" --model haiku
+
+# Output formats
+pirq run "Analyze" --output brief    # Truncated
+pirq run "Analyze" --output json     # Raw JSON
+pirq run "Analyze" --output full     # Complete
+
+# Execution limits
+pirq run "Refactor" --max-turns 5
+pirq run "Review" --tools Read,Grep
+```
+
+### Session Management
+
+```bash
+# Resume last session
+pirq run --last "Continue"
+
+# Auto-approve permissions
+pirq run --yolo "Deploy changes"
+
+# Combined
+pirq run --last --yolo "Finish the task"
+```
+
+### Token Budget
+
+```bash
+# Current status with pacing
+pirq tokens status
+
+# Detailed pacing analysis
+pirq tokens pace
+
+# Configure thresholds
+pirq tokens warn --used 80
 pirq tokens block --used 95
 
-# Configure emergency reserve
+# Emergency reserve
 pirq tokens reserve --percent 5 --mode hard
-
-# View all thresholds
-pirq tokens thresholds
 ```
 
 ### Turbo Mode
 
-Burn remaining tokens productively before your budget resets:
+End-of-period token utilization:
 
 ```bash
-# Check if turbo mode is active
 pirq turbo status
-
-# Configure turbo activation
 pirq turbo set --days 3 --min-remaining 20
+pirq turbo on
 ```
 
-When active, PIRQ suggests using remaining tokens on:
-- Research tasks (explore docs, evaluate libraries)
-- Maintenance tasks (cleanup, refactoring)
-- Cosmetic tasks (formatting, comments)
-
-### Pacing Analysis
-
-PIRQ tracks your token velocity and projects end-of-period usage:
+### Audit Trail
 
 ```bash
-pirq tokens pace
-```
-
-Output:
-```
-PERIOD: Day 15 of 30
-        15.0 days remaining
-        50% of period elapsed
-
-BUDGET PACING:
-  Budget:      2,500,000 tokens | $10.00
-  Expected:    1,250,000 tokens (at this point)
-  Actual:        800,000 tokens | $3.20
-  Remaining:   1,700,000 tokens | $6.80
-
-PACE STATUS: [OK] UNDER
-  Pace:        64% of expected usage
-```
-
-### Git Integration
-
-PIRQ ensures your repository is backed up before running:
-
-```bash
-# Check git status
-pirq git status
-
-# View prompt history
-pirq git log
-
-# Rollback to previous prompt
-pirq rollback
-```
-
-### Audit Logging
-
-All executions are logged to `.pirq/logs/`:
-
-```bash
-# View command audit trail
-pirq logs audit
-
-# Verify log integrity (tamper-evident)
-pirq logs verify
-
-# View session details
-pirq logs show
+pirq logs audit      # Command history
+pirq logs verify     # Integrity check
+pirq logs show       # Session details
 ```
 
 ## Configuration
 
-PIRQ stores configuration in `.pirq/config.json`:
+PIRQ configuration lives in `.pirq/config.json`:
 
 ```json
 {
@@ -173,12 +129,11 @@ PIRQ stores configuration in `.pirq/config.json`:
 }
 ```
 
-### Token Plans
+### Plan Presets
 
 ```bash
-# Configure for different Anthropic plans
-pirq tokens configure --plan pro    # Pro plan limits
-pirq tokens configure --plan max    # Max plan limits
+pirq tokens configure --plan pro
+pirq tokens configure --plan max
 pirq tokens configure --plan custom --budget 5000000
 ```
 
@@ -189,49 +144,18 @@ User Prompt
      │
      ▼
 ┌─────────┐
-│  PIRQ   │ ◄── Gates check: tokens, backup, rate limit, session
+│  PIRQ   │◄── Gate validation
 └────┬────┘
-     │ (if all gates pass)
+     │ Pass
      ▼
 ┌─────────┐
 │ Claude  │
 └────┬────┘
      │
      ▼
-Response + Logging
-```
-
-## Documentation
-
-- [Turbo Mode](docs/TURBO_MODE.md) - End-of-period token management
-- [Architecture Decisions](docs/ARCHITECTURE_DECISIONS.md) - Design rationale
-- [Design Specification](docs/DESIGN_PINNED.md) - Technical details
-
-## Why PIRQ?
-
-1. **Budget Control** - Stop before you overspend
-2. **Pacing** - Track velocity, project end-of-period usage
-3. **Safety** - Git backup gate prevents data loss
-4. **Efficiency** - External gating is cheaper than AI self-monitoring
-5. **Visibility** - Know exactly where your tokens go
-
-## Development
-
-```bash
-# Install dev dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest
-
-# Check all gates
-pirq check --json
+Response + Audit Log
 ```
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Contributing
-
-Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+MIT — See [LICENSE](LICENSE)

@@ -151,6 +151,7 @@ class Orchestrator:
         timeout: Optional[int] = None,
         last_session: bool = False,
         yolo: bool = False,
+        auto_mode: bool = False,
     ) -> OrchResult:
         """Execute a single orchestration cycle.
 
@@ -170,6 +171,7 @@ class Orchestrator:
             timeout: Timeout in seconds
             last_session: Resume the most recent session
             yolo: Auto-approve all permissions
+            auto_mode: Full auto mode (yolo + no questions + default max-turns)
 
         Returns:
             OrchResult with gate results and run result
@@ -187,6 +189,7 @@ class Orchestrator:
             "timeout": timeout,
             "last_session": last_session,
             "yolo": yolo,
+            "auto_mode": auto_mode,
         }
         # Start session logging (before gate check)
         session_id = self.session_logger.start_session(
@@ -430,6 +433,7 @@ class Orchestrator:
         timeout: Optional[int] = None,
         last_session: bool = False,
         yolo: bool = False,
+        auto_mode: bool = False,
     ) -> RunResult:
         """Invoke Claude with the given prompt.
 
@@ -447,10 +451,21 @@ class Orchestrator:
             timeout: Timeout in seconds
             last_session: Resume the most recent session
             yolo: Auto-approve all permissions
+            auto_mode: Full auto mode (yolo + no questions + default max-turns)
 
         Returns:
             RunResult with output and metadata
         """
+        # Auto mode: enable yolo, set default max-turns, add system prompt
+        if auto_mode:
+            yolo = True
+            if max_turns is None:
+                max_turns = 50  # Prevent infinite loops
+            auto_system = "Do not ask clarifying questions. Make reasonable assumptions and proceed autonomously."
+            if system_prompt:
+                system_prompt = f"{system_prompt}\n\n{auto_system}"
+            else:
+                system_prompt = auto_system
         # Find claude CLI
         claude_cli = self._find_claude_cli()
         if not claude_cli:
