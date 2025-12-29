@@ -21,7 +21,7 @@ from .base import Gate, GateResult, GateStatus
 class LoopRecord:
     """Record of a single run output."""
     timestamp: str
-    output_hash: str
+    output_hash: Optional[str]  # None for empty outputs
     error_hash: Optional[str]
     files_changed: int
 
@@ -81,9 +81,13 @@ class LoopDetector:
         files_changed: int = 0,
     ) -> None:
         """Record a run output."""
+        # Don't hash empty output - it would cause false positives
+        # (all empty outputs hash to same value)
+        output_hash = self._hash_text(output) if output.strip() else None
+
         record = LoopRecord(
             timestamp=datetime.utcnow().isoformat() + "Z",
-            output_hash=self._hash_text(output),
+            output_hash=output_hash,
             error_hash=self._hash_text(error) if error else None,
             files_changed=files_changed,
         )
@@ -105,8 +109,11 @@ class LoopDetector:
         if len(self._records) < 2:
             return {"detected": False}
 
-        # Check same output
-        output_hashes = [r.output_hash for r in self._records]
+        # Check same output (skip None hashes - empty outputs don't count)
+        output_hashes = [r.output_hash for r in self._records if r.output_hash]
+        if not output_hashes:
+            return {"detected": False}
+
         latest_hash = output_hashes[-1]
         same_output_count = output_hashes.count(latest_hash)
 
