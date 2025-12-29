@@ -193,78 +193,71 @@ class Orchestrator:
             "yolo": yolo,
             "auto_mode": auto_mode,
         }
-        # Start session logging (before gate check)
-        session_id = self.session_logger.start_session(
-            prompt=prompt,
-            cwd=self.cwd,
-            model=model or "claude",
-        )
 
-        # Set prompt for gates that need it
-        self.task_gate.set_prompt(prompt)
-        self.token_gate.set_prompt(prompt)
-
-        # Check gates
-        all_clear, gate_results = self.check_gates()
-        blocked_by = [name for name, r in gate_results.items() if r.is_blocked]
-
-        # Log gate results to session
-        self.session_logger.log_gate_results(session_id, all_clear, gate_results)
-
-        # Start audit trail entry
-        audit_entry_id = self.audit_logger.log_command_start(
-            command="run",
-            prompt=prompt,
-            session_id=session_id,
-            gates_passed=all_clear,
-            gates_blocked_by=blocked_by,
-        )
-
-        if not all_clear and not force:
-            # Finalize logs for blocked run
-            self.session_logger.finalize_session(session_id, exit_code=-1)
-            self.audit_logger.log_command_end(
-                entry_id=audit_entry_id,
-                exit_code=-1,
-                tokens_used=0,
-                files_changed=0,
-                orch_action=None,
-            )
-            return OrchResult(
-                blocked=True,
-                gate_results=gate_results,
-                semaphore=self.state_manager.load_semaphore(),
-            )
-        elif not all_clear and force:
-            # Force bypass - log and continue
-            self.audit_logger.log(
-                event="force_bypass",
-                gates_bypassed=blocked_by,
-                prompt=prompt[:100],
-            )
-
-        # Acquire session lock (force allows multiple sessions)
+        # FIRST: Acquire session lock to prevent concurrent runs
+        # This must happen BEFORE gate checks to avoid race conditions
         if not self.session_gate.acquire(task or "single-run", force=force):
-            self.session_logger.finalize_session(session_id, exit_code=-2)
-            self.audit_logger.log_command_end(
-                entry_id=audit_entry_id,
-                exit_code=-2,
-                tokens_used=0,
-                files_changed=0,
-                orch_action=None,
-            )
+            # Another session is running - return immediately
             return OrchResult(
                 blocked=True,
-                gate_results=gate_results,
+                gate_results={"run_complete": GateResult.block(
+                    "Another PIRQ session is running in this directory",
+                    {"session_active": True}
+                )},
                 run_result=None,
                 semaphore=self.state_manager.load_semaphore(),
             )
 
+        # Everything below is wrapped in try/finally to ensure lock release
         run_result = None
         prompt_num = None
         files_changed = 0
+        session_id = None
+        audit_entry_id = None
+        gate_results = {}
 
         try:
+            # Start session logging
+            session_id = self.session_logger.start_session(
+                prompt=prompt,
+                cwd=self.cwd,
+                model=model or "claude",
+            )
+
+            # Set prompt for gates that need it
+            self.task_gate.set_prompt(prompt)
+            self.token_gate.set_prompt(prompt)
+
+            # Check gates
+            all_clear, gate_results = self.check_gates()
+            blocked_by = [name for name, r in gate_results.items() if r.is_blocked]
+
+            # Log gate results to session
+            self.session_logger.log_gate_results(session_id, all_clear, gate_results)
+
+            # Start audit trail entry
+            audit_entry_id = self.audit_logger.log_command_start(
+                command="run",
+                prompt=prompt,
+                session_id=session_id,
+                gates_passed=all_clear,
+                gates_blocked_by=blocked_by,
+            )
+
+            if not all_clear and not force:
+                # Blocked by gates - will release lock in finally
+                return OrchResult(
+                    blocked=True,
+                    gate_results=gate_results,
+                    semaphore=self.state_manager.load_semaphore(),
+                )
+            elif not all_clear and force:
+                # Force bypass - log and continue
+                self.audit_logger.log(
+                    event="force_bypass",
+                    gates_bypassed=blocked_by,
+                    prompt=prompt[:100],
+                )
             # Log session start (legacy logger)
             self.logger.log_session_start(task)
 
@@ -351,21 +344,23 @@ class Orchestrator:
             )
 
         finally:
-            # Finalize all logging
+            # Finalize all logging (handle None values from early exits)
             exit_code = run_result.exit_code if run_result else -1
             tokens = run_result.tokens_used if run_result else 0
             orch_action = run_result.orch_tag if run_result else None
 
-            self.session_logger.finalize_session(session_id, exit_code=exit_code)
-            self.audit_logger.log_command_end(
-                entry_id=audit_entry_id,
-                exit_code=exit_code,
-                tokens_used=tokens,
-                files_changed=files_changed,
-                orch_action=orch_action,
-            )
+            if session_id:
+                self.session_logger.finalize_session(session_id, exit_code=exit_code)
+            if audit_entry_id:
+                self.audit_logger.log_command_end(
+                    entry_id=audit_entry_id,
+                    exit_code=exit_code,
+                    tokens_used=tokens,
+                    files_changed=files_changed,
+                    orch_action=orch_action,
+                )
 
-            # Release lock
+            # Always release lock
             self.session_gate.release()
             self.logger.log_session_end()
 
