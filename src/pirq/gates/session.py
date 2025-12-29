@@ -3,19 +3,27 @@
 Uses a lock file with atomic file locking to track active sessions.
 Supports multiple concurrent sessions with --force mode.
 Handles stale locks from crashed processes.
+Includes heartbeat tracking for hung process detection.
 """
 
 import atexit
 import json
 import os
 import sys
+import time
+import threading
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 from .base import Gate, GateResult
 from ..config import Config
+
+# Heartbeat interval in seconds
+HEARTBEAT_INTERVAL = 5
+# Session considered stale if no heartbeat for this many seconds
+STALE_THRESHOLD = 30
 
 
 def _is_process_alive(pid: int) -> bool:
@@ -55,8 +63,11 @@ class SessionGate(Gate):
         super().__init__(config)
         self.lock_file = self._get_lock_path()
         self._mutex_file = self.lock_file.with_suffix('.lck')
+        self._heartbeat_file = self.lock_file.with_suffix('.heartbeat')
         self._my_session_id: Optional[str] = None
         self._fd: Optional[int] = None  # File descriptor for mutex
+        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._heartbeat_stop = threading.Event()
         atexit.register(self._cleanup_on_exit)
 
     def _get_lock_path(self) -> Path:
@@ -65,16 +76,29 @@ class SessionGate(Gate):
         return pirq_dir / "runtime" / "sessions.json"
 
     @contextmanager
-    def _file_lock(self):
-        """Cross-platform atomic file locking context manager."""
+    def _file_lock(self, timeout: float = 10.0):
+        """Cross-platform atomic file locking context manager.
+
+        Args:
+            timeout: Max seconds to wait for lock (default 10)
+        """
         self._mutex_file.parent.mkdir(parents=True, exist_ok=True)
 
         if sys.platform == "win32":
             import msvcrt
-            # Windows: use msvcrt.locking with exclusive lock
+            # Windows: use msvcrt.locking with retry loop
             fd = os.open(str(self._mutex_file), os.O_RDWR | os.O_CREAT)
             try:
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                # Retry loop for lock acquisition
+                start = time.time()
+                while True:
+                    try:
+                        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                        break  # Lock acquired
+                    except OSError:
+                        if time.time() - start > timeout:
+                            raise TimeoutError(f"Could not acquire lock within {timeout}s")
+                        time.sleep(0.1)  # Wait and retry
                 try:
                     yield
                 finally:
@@ -109,16 +133,91 @@ class SessionGate(Gate):
         self.lock_file.write_text(json.dumps(data, indent=2))
 
     def _clean_stale_sessions(self, sessions: List[Dict]) -> List[Dict]:
-        """Remove sessions from dead processes."""
-        return [s for s in sessions if _is_process_alive(s.get("pid", 0))]
+        """Remove sessions from dead processes or stale heartbeats."""
+        active = []
+        now = datetime.utcnow()
+
+        for s in sessions:
+            pid = s.get("pid", 0)
+
+            # Check if process is alive
+            if not _is_process_alive(pid):
+                continue
+
+            # Check heartbeat staleness
+            last_heartbeat = s.get("last_heartbeat")
+            if last_heartbeat:
+                try:
+                    hb_time = datetime.fromisoformat(last_heartbeat.replace("Z", ""))
+                    age = (now - hb_time).total_seconds()
+                    if age > STALE_THRESHOLD:
+                        # Process alive but heartbeat stale - likely hung
+                        continue
+                except (ValueError, TypeError):
+                    pass  # Invalid timestamp, keep session
+
+            active.append(s)
+
+        return active
 
     def _clean_lock(self) -> None:
-        """Remove the lock file."""
+        """Remove the lock file and heartbeat file."""
         try:
             if self.lock_file.exists():
                 self.lock_file.unlink()
         except IOError:
             pass  # Best effort
+        try:
+            if self._heartbeat_file.exists():
+                self._heartbeat_file.unlink()
+        except IOError:
+            pass
+
+    def _start_heartbeat(self) -> None:
+        """Start background heartbeat thread."""
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            daemon=True,
+            name="pirq-heartbeat"
+        )
+        self._heartbeat_thread.start()
+
+    def _stop_heartbeat(self) -> None:
+        """Stop heartbeat thread."""
+        self._heartbeat_stop.set()
+        if self._heartbeat_thread:
+            self._heartbeat_thread.join(timeout=2)
+            self._heartbeat_thread = None
+
+    def _heartbeat_loop(self) -> None:
+        """Background loop that updates heartbeat."""
+        while not self._heartbeat_stop.wait(timeout=HEARTBEAT_INTERVAL):
+            self._update_heartbeat()
+
+    def _update_heartbeat(self) -> None:
+        """Update our session's heartbeat timestamp."""
+        if not self._my_session_id:
+            return
+
+        try:
+            with self._file_lock(timeout=2):
+                data = self._read_lock_data()
+                if not data:
+                    return
+
+                now = datetime.utcnow().isoformat() + "Z"
+
+                # Update our session's heartbeat
+                for s in data.get("sessions", []):
+                    if s.get("id") == self._my_session_id:
+                        s["last_heartbeat"] = now
+                        break
+
+                data["last_updated"] = now
+                self._write_lock_data(data)
+        except (TimeoutError, Exception):
+            pass  # Best effort - don't crash on heartbeat failure
 
     def check(self) -> GateResult:
         """Check if another session is running.
@@ -195,28 +294,36 @@ class SessionGate(Gate):
                     return False
 
                 # Generate unique session ID
-                session_id = f"{os.getpid()}-{datetime.utcnow().timestamp()}"
+                now = datetime.utcnow()
+                session_id = f"{os.getpid()}-{now.timestamp()}"
                 self._my_session_id = session_id
 
-                # Add our session
+                # Add our session with heartbeat
                 data["sessions"].append({
                     "id": session_id,
                     "pid": os.getpid(),
-                    "started": datetime.utcnow().isoformat() + "Z",
+                    "started": now.isoformat() + "Z",
+                    "last_heartbeat": now.isoformat() + "Z",
                     "task": task,
                     "force": force,
                     "hostname": os.environ.get("COMPUTERNAME", os.environ.get("HOSTNAME", "unknown")),
                 })
                 data["active_count"] = len(data["sessions"])
-                data["last_updated"] = datetime.utcnow().isoformat() + "Z"
+                data["last_updated"] = now.isoformat() + "Z"
 
                 self._write_lock_data(data)
-                return True
+
+            # Start heartbeat AFTER releasing file lock
+            self._start_heartbeat()
+            return True
         except Exception:
             return False
 
     def release(self) -> None:
         """Release our session from the lock."""
+        # Stop heartbeat first
+        self._stop_heartbeat()
+
         if not self._my_session_id:
             return
 
@@ -247,7 +354,8 @@ class SessionGate(Gate):
             self._my_session_id = None
 
     def _cleanup_on_exit(self) -> None:
-        """Ensure lock is released on process exit."""
+        """Ensure lock and heartbeat are released on process exit."""
+        self._stop_heartbeat()
         self.release()
 
     def get_lock_info(self) -> Optional[Dict[str, Any]]:
