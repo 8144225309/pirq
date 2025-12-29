@@ -224,7 +224,7 @@ class SessionGate(Gate):
 
         Detection:
         1. Acquire atomic file lock
-        2. Check if sessions exist
+        2. Check if sessions exist (excluding our own session)
         3. Clean stale sessions from dead PIDs
         4. Return status
         """
@@ -250,14 +250,21 @@ class SessionGate(Gate):
                     else:
                         self._clean_lock()
 
-                if active:
-                    info = active[0]
+                # Exclude our own session from the check
+                # (we already hold the lock, so we shouldn't block ourselves)
+                other_sessions = [
+                    s for s in active
+                    if s.get("id") != self._my_session_id
+                ]
+
+                if other_sessions:
+                    info = other_sessions[0]
                     return GateResult.block(
                         f"Session running (PID {info['pid']}, task: {info.get('task', 'unknown')})",
                         {
                             "session_active": True,
-                            "active_count": len(active),
-                            "sessions": active,
+                            "active_count": len(other_sessions),
+                            "sessions": other_sessions,
                         }
                     )
 
