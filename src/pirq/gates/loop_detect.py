@@ -45,13 +45,13 @@ class LoopDetector:
 
     def _load_state(self) -> None:
         """Load state from file."""
-        if self.state_path.exists():
+        if self.state_path.is_file():
             try:
                 data = json.loads(self.state_path.read_text())
                 self._records = [
                     LoopRecord(**r) for r in data.get("records", [])
                 ]
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError, KeyError):
                 self._records = []
 
     def _save_state(self) -> None:
@@ -148,7 +148,7 @@ class LoopDetector:
     def clear(self) -> None:
         """Clear loop detection state."""
         self._records = []
-        if self.state_path.exists():
+        if self.state_path.is_file():
             self.state_path.unlink()
 
 

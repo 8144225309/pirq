@@ -138,6 +138,10 @@ def _format_run_output(raw_output: str, mode: str) -> tuple:
     if mode == "json":
         return raw_output, {}
 
+    # Handle empty output
+    if not raw_output or not raw_output.strip():
+        return "(no output)", {"parse_error": "empty_output"}
+
     # Parse JSON for brief/normal/full modes
     metadata = {}
     try:
@@ -149,10 +153,23 @@ def _format_run_output(raw_output: str, mode: str) -> tuple:
                 "num_turns": data.get("num_turns"),
                 "duration_api_ms": data.get("duration_api_ms"),
             }
+        elif isinstance(data, dict):
+            # JSON but no "result" field - could be error response
+            if "error" in data:
+                result_text = f"Error: {data['error']}"
+                metadata = {"parse_error": "error_response"}
+            else:
+                # Unknown JSON structure, show it formatted
+                result_text = json.dumps(data, indent=2)
+                metadata = {"parse_error": "unknown_json_structure"}
         else:
             result_text = raw_output
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError as e:
+        # Not valid JSON - could be raw text, error message, or corrupted
         result_text = raw_output
+        # Check if it looks like a partial JSON (starts with { but fails to parse)
+        if raw_output.strip().startswith("{"):
+            metadata = {"parse_error": f"malformed_json: {str(e)[:50]}"}
 
     if mode == "brief":
         if len(result_text) > 500:
@@ -240,6 +257,14 @@ def cmd_run(args, orch: Orchestrator) -> int:
                 print(f"[X] Claude failed (exit code {run.exit_code})")
                 if run.error:
                     print(f"Error: {run.error}")
+                elif run.output:
+                    # No stderr but have stdout - might contain error info
+                    formatted, meta = _format_run_output(run.output, "brief")
+                    if meta.get("parse_error"):
+                        print(f"Parse issue: {meta['parse_error']}")
+                    print(f"Output: {formatted[:200]}")
+                else:
+                    print("Error: No output received from Claude")
             return 1
 
     return 0
@@ -315,7 +340,8 @@ def cmd_loop(args, orch: Orchestrator) -> int:
                 print("\nRecent runs:")
                 for r in records[-5:]:
                     ts = r.timestamp[:19]
-                    print(f"  {ts}  hash={r.output_hash[:8]}  files={r.files_changed}")
+                    hash_display = r.output_hash[:8] if r.output_hash else "(empty)"
+                    print(f"  {ts}  hash={hash_display}  files={r.files_changed}")
 
             check = detector.check_loop()
             if check["detected"]:

@@ -42,6 +42,8 @@ class RunResult:
     exit_code: int
     duration_ms: int
     tokens_used: int = 0
+    tokens_input: int = 0
+    tokens_output: int = 0
     orch_tag: Optional[str] = None
 
 
@@ -309,9 +311,9 @@ class Orchestrator:
                 exit_code=run_result.exit_code,
                 output=run_result.output,
                 error=run_result.error,
-                tokens_input=run_result.tokens_used // 2,
-                tokens_output=run_result.tokens_used // 2,
-                tokens_source="estimated",
+                tokens_input=run_result.tokens_input,
+                tokens_output=run_result.tokens_output,
+                tokens_source="parsed" if run_result.tokens_used > 0 else "none",
                 orch_tag=run_result.orch_tag,
                 orch_summary=self._extract_summary(run_result),
                 git_tag_post=git_tag_post,
@@ -320,8 +322,8 @@ class Orchestrator:
             # Record token usage
             if run_result.tokens_used > 0:
                 self.token_gate.record_usage(
-                    input_tokens=run_result.tokens_used // 2,
-                    output_tokens=run_result.tokens_used // 2,
+                    input_tokens=run_result.tokens_input,
+                    output_tokens=run_result.tokens_output,
                     model="claude",
                     task=task,
                 )
@@ -543,7 +545,7 @@ class Orchestrator:
             duration_ms = int((time.time() - start_time) * 1000)
 
             # Parse output for tokens (if JSON format)
-            tokens_used = self._parse_token_usage(result.stdout)
+            token_info = self._parse_token_usage(result.stdout)
 
             # Parse ORCH tag
             orch_tag = self._parse_orch_tag(result.stdout)
@@ -554,7 +556,9 @@ class Orchestrator:
                 error=result.stderr if result.stderr else None,
                 exit_code=result.returncode,
                 duration_ms=duration_ms,
-                tokens_used=tokens_used,
+                tokens_used=token_info["total"],
+                tokens_input=token_info["input_tokens"],
+                tokens_output=token_info["output_tokens"],
                 orch_tag=orch_tag,
             )
 
@@ -587,11 +591,46 @@ class Orchestrator:
                 duration_ms=duration_ms,
             )
 
-    def _parse_token_usage(self, output: str) -> int:
-        """Parse token usage from Claude output."""
-        # TODO: Implement actual token parsing from JSON output
-        # For now, return 0 (will be enhanced in Phase 1)
-        return 0
+    def _parse_token_usage(self, output: str) -> Dict[str, int]:
+        """Parse token usage from Claude output.
+
+        Claude CLI with --output-format json returns:
+        {
+            "result": "...",
+            "usage": {
+                "input_tokens": N,
+                "output_tokens": N,
+                "cache_creation_input_tokens": N,
+                "cache_read_input_tokens": N
+            },
+            ...
+        }
+
+        Returns dict with:
+            input_tokens, output_tokens, cache_creation, cache_read, total
+        """
+        empty = {"input_tokens": 0, "output_tokens": 0, "cache_creation": 0, "cache_read": 0, "total": 0}
+
+        if not output or not output.strip():
+            return empty
+
+        try:
+            import json
+            data = json.loads(output)
+            if isinstance(data, dict):
+                usage = data.get("usage", {})
+                if usage:
+                    result = {
+                        "input_tokens": usage.get("input_tokens", 0),
+                        "output_tokens": usage.get("output_tokens", 0),
+                        "cache_creation": usage.get("cache_creation_input_tokens", 0),
+                        "cache_read": usage.get("cache_read_input_tokens", 0),
+                    }
+                    result["total"] = sum(result.values())
+                    return result
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
+        return empty
 
     def _parse_orch_tag(self, output: str) -> Optional[str]:
         """Parse ORCH tag from Claude output."""
