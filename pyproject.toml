@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pirq"
+version = "0.1.0-alpha"
+description = "Pre-execution gating layer for Claude Code - budget control, pacing, and safety"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "PIRQ Contributors" }
+]
+keywords = ["claude", "llm", "orchestration", "automation", "ai", "budget", "tokens"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/8144225309/pirq"
+Repository = "https://github.com/8144225309/pirq"
+Documentation = "https://github.com/8144225309/pirq#readme"
+Issues = "https://github.com/8144225309/pirq/issues"
+Changelog = "https://github.com/8144225309/pirq/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+
+[project.scripts]
+pirq = "pirq.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pirq"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
