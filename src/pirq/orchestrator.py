@@ -342,25 +342,48 @@ class Orchestrator:
                 semaphore=self.state_manager.load_semaphore(),
             )
 
+        except KeyboardInterrupt:
+            # User pressed Ctrl+C - clean exit
+            print("\n[!] Interrupted by user")
+            return OrchResult(
+                blocked=False,
+                gate_results=gate_results,
+                run_result=RunResult(
+                    success=False,
+                    output="",
+                    error="Interrupted by user",
+                    exit_code=-130,
+                    duration_ms=0,
+                ),
+                semaphore=self.state_manager.load_semaphore(),
+            )
+
         finally:
             # Finalize all logging (handle None values from early exits)
-            exit_code = run_result.exit_code if run_result else -1
-            tokens = run_result.tokens_used if run_result else 0
-            orch_action = run_result.orch_tag if run_result else None
+            # Wrap in try/except to prevent crashes during cleanup
+            try:
+                exit_code = run_result.exit_code if run_result else -1
+                tokens = run_result.tokens_used if run_result else 0
+                orch_action = run_result.orch_tag if run_result else None
 
-            if session_id:
-                self.session_logger.finalize_session(session_id, exit_code=exit_code)
-            if audit_entry_id:
-                self.audit_logger.log_command_end(
-                    entry_id=audit_entry_id,
-                    exit_code=exit_code,
-                    tokens_used=tokens,
-                    files_changed=files_changed,
-                    orch_action=orch_action,
-                )
+                if session_id:
+                    self.session_logger.finalize_session(session_id, exit_code=exit_code)
+                if audit_entry_id:
+                    self.audit_logger.log_command_end(
+                        entry_id=audit_entry_id,
+                        exit_code=exit_code,
+                        tokens_used=tokens,
+                        files_changed=files_changed,
+                        orch_action=orch_action,
+                    )
+            except Exception:
+                pass  # Don't crash during cleanup
 
             # Always release lock
-            self.session_gate.release()
+            try:
+                self.session_gate.release()
+            except Exception:
+                pass
             self.logger.log_session_end()
 
     def _find_claude_cli(self) -> Optional[str]:
